@@ -1,0 +1,84 @@
+@startuml up to downx    direction
+component compiler as "sh-elf-gcc"
+component objcopy as "sh-elf-objcoppy"
+component linker as "sh-elf-ld"
+component mkisofs
+component CueMaker
+component emulator as "Émulateur Saturn\n(e.g. Yabause)"
+file IP as "IP.BIN" {
+    file file1 [
+        //Métadonnées//
+        ----
+        **SYS_SEC.O**
+        ----
+        **SYS_SEC.O**
+        ----
+        **SYS_INIT.O**
+        ----
+        SMPSYS.O
+    ]
+}
+
+folder project {
+  file main.c
+  file main.o
+  file game.map
+  file game.elf
+  file game.raw
+  file game.iso
+  file game.cue
+  folder cd {
+    file 1st_read_file as "1st_read.bin (ou 0.bin)" {
+        file file2 [
+            SLSTART
+            ----
+            SLPROG
+            ----
+            ...
+        ]
+    }
+    file ABS.TXT
+    file BIB.TXT
+    file CPY.TXT
+  }
+}
+
+folder SGL {
+  file SYS_SEC.O
+  file SYS_ARE.O as "SYS_ARE?.O"
+  file SYS_INIT.O
+  file SMPSYS.O
+  file SGLAREA.O
+  file SL.LNK as "SL.LNK\n(ou sgl.linker)"
+}
+
+actor player
+label joy
+
+SYS_SEC.O *- IP
+SYS_ARE.O *- IP
+SYS_INIT.O *- IP
+SMPSYS.O *- IP
+
+main.c --> compiler
+compiler --> main.o
+main.o --> linker
+SGLAREA.O --> linker
+SL.LNK ..> linker
+linker --> game.elf
+linker ..> game.map
+game.elf --> objcopy
+objcopy --> game.raw
+game.raw --> 1st_read_file
+IP --> mkisofs
+cd --> mkisofs
+mkisofs --> game.iso
+CueMaker <-- game.iso
+CueMaker --> game.cue
+game.cue -> emulator
+game.iso -> emulator
+emulator --> player
+player --> joy
+
+compiler -[hidden] linker
+@enduml

@@ -1,0 +1,35 @@
+@startuml
+folder CD {
+    file IP as "IP.BIN" {
+        file file1 [
+            //Métadonnées//
+            ----
+            **SYS_SEC.O**
+            ----
+            **SYS_SEC.O**
+            ----
+            **SYS_INIT.O**
+            ----
+            SMPSYS.O
+        ]
+    }
+    
+    file 1st_read_file as "1st_read.bin" {
+        file file2 [
+            SGLAREA.O
+            ----
+            main.o
+            ----
+            object.o
+            ----
+            other_object.o
+            ----
+            ...
+        ]
+    }
+    
+    file asset.bmp
+    file anotherAsset.bmp
+    file someMusic.mp3
+}
+@enduml

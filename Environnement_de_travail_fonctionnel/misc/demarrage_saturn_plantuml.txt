@@ -1,0 +1,40 @@
+@startuml
+|BIOS Saturn|
+start
+:Chargement de l'IP en mémoire;
+:Vérification des marquages sur le disque;
+:Exécution du code de sécurité;
+|IP|
+card SYS_SEC.O {
+:Vérification du code sécurité;
+}
+|BIOS Saturn|
+:Exécution du code région;
+|IP|
+card SYS_ARE?.O {
+:Vérification du code région;
+}
+|BIOS Saturn|
+:Exécution de la 1ère partie de l'AIP;
+|IP|
+card SYS_INIT.O {
+:Chargement de 1st read file \n et affichage du logo Sega;
+}
+|BIOS Saturn|
+:Exécution de la seconde partie de l'AIP;
+|IP|
+card SMPSYS.O {
+:Initialisation de composants de la Saturn;
+:Exécution de 1st read file;
+}
+|1st read file|
+card SGLAREA.O {
+:Initialisation de la librairie;
+:Lancement du jeu;
+}
+card Code du développeur {
+:Jeu;
+}
+@enduml
+
+
