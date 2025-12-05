@@ -50,11 +50,9 @@ The sh-elf toolchain (GNU binutils for SuperH) fails to process SGL .A files due
 3. Symbol table misinterpretation: The long-name table is parsed as filenames by ar tv.
 4. Byte alignment and padding: Sega archives use strict even-byte alignment with occasional \n padding.
 5. No standard member headers after the name table: Direct transition to COFF object data.
-6. Special case of SGLAREA.O having a unique structure.
+6. Some .O objects (both within .A archives and standalone) have a unique structure with a SLPROG section.
 
 Result: when trying to convert from COFF to ELF, sh-elf-ar tv lists entries, but sh-elf-ar x produces no output.
-
-However, the .O objects contained within the archives or as individuals files respect the standard and can be converted by sh-elf-objcopy, with the notable exception of SGLAREA.O, discussed later in this document. However SGLAREA.O is the only .O file worth converting, the other ones playing a very specific role in the making of an IP file and nothing else.
 
 ---
 
@@ -88,13 +86,13 @@ Critical observations:
 
 ---
 
-### 1.4 Special Case: SGLAREA.O – The SLPROG Section and Symbol Type Preservation
+### 1.4 Special Case: the SLPROG Section and Symbol Type Preservation
 
-Among all the object files shipped with SGL, `SGLAREA.O` is unique and requires special handling during COFF-to-ELF conversion. Unlike every other standalone `.O` file or member extracted from the `.A` archives, `SGLAREA.O` contains a non-standard section named `SLPROG`. This section holds what are effectively global variables (e.g. `_CLOfstBuf`, `_MasterStack`, `_WorkBuf`, etc.), but in the original Hitachi COFF object they are intentionally marked as code symbols (type `T` in text section) rather than data symbols (`D` or `B`).
+Some of the object files shipped with SGL require special handling during COFF-to-ELF conversion. Indeed, unlike most standalone`.O` file or member extracted from the `.A` archives, some contain a non-standard section named `SLPROG`. This section holds what are effectively global variables (e.g. `_CLOfstBuf`, `_MasterStack`, `_WorkBuf`, etc.), but in the original Hitachi COFF object they are intentionally marked as code symbols (type `T` in text section) rather than data symbols (`D` or `B`).
 
 This design choice originates from the official Sega/SNK linker scripts, which explicitly place the `SLPROG` section in the executable code area via the directive `*(SLPROG)` in the `SLPROG` output section. By doing so, the official toolchain forces the linker to treat these symbols as having text type, even though semantically they are read/write data used by the library initialization code.
 
-A naive conversion with `sh-elf-objcopy -I coff-sh -O elf32-sh` maps the `SLPROG` section to `.data` or `.bss` and consequently demotes all symbols to type `D` (global data) or `g` (global in small section). While the resulting object is still linkable (the addresses remain correct), the symbol types no longer match the original library and differ from what most developers expect when inspecting SGL binaries.
+A naive conversion with `sh-elf-objcopy -I coff-sh -O elf32-sh` maps the `SLPROG` section to `.data` or `.bss` and consequently demotes all symbols to type `D` (global data) or `g` (global in small section).
 
 To preserve the original behavior (symbols appear as `T` and reside in a code section), the conversion must explicitly inform binutils that `SLPROG` is an allocatable code section:
 
@@ -104,7 +102,7 @@ sh-elf-objcopy -I coff-sh -O elf32-sh \
     SGLAREA.O SGLAREA_converted.O
 ```
 
-Alternatively, the section can be renamed to `.text` while keeping the code flag, but preserving the original name and using the flag approach is cleaner and matches the intent of the official Sega linker scripts. All other `.O` files can be converted with the standard objcopy command without this special treatment, although those files are not meant to be used in any other format than that in which they were provided.
+Alternatively, the section can be renamed to `.text` while keeping the code flag, but preserving the original name and using the flag approach is cleaner and matches the intent of the official Sega linker scripts.
 
 ---
 
@@ -120,13 +118,15 @@ Our conversion method bypasses sh-elf-ar entirely and uses raw byte parsing. For
    c. Extract filename (bytes 0–15, trim / and trailing spaces).
    d. Extract size (bytes 48–57, parse decimal).
    e. Skip 60 bytes, extract size bytes → .coff file.
-   f. Convert: sh-elf-objcopy -I coff-sh -O elf32-sh.
+   f. Convert: sh-elf-objcopy -I coff-sh -O elf32-sh or special case if an SLPROG section is detected.
    g. Advance offset: +60 + size (+1 if odd).
 4. After all members, use sh-elf-ar -rvs to create GNU-compatible .A.
 
 This produces fully functional ELF archives usable with sh-elf-gcc.
 
-Here is the full script that we used (includes the .O and SGLAREA.O conversion).
+Here is the full script that we used.
+
+Please note that this script converts all standalone .O files although this does not make much sense. Indeed, only SGLAREA.O is worth converting as the other ones are only meant to be included in an IP.BIN file and not used for actual linking.
 
 ```bash
 #!/bin/bash
@@ -184,7 +184,16 @@ convert_sega_coff() {
         # And of course extract the coff .o and convert it to elf.
         local obj_file="$temp_dir/${name%}"
         dd if="$input" bs=1 skip=$((offset + 60)) count=$size of="$obj_file.coff" 2>/dev/null
-        $bindir/sh-elf-objcopy -I coff-sh -O elf32-sh "$obj_file.coff" "$obj_file" 2>/dev/null || continue
+#        $bindir/sh-elf-objcopy -I coff-sh -O elf32-sh "$obj_file.coff" "$obj_file" 2>/dev/null || continue
+        if $bindir/sh-elf-objdump -h "$obj_file.coff" 2>/dev/null | grep -q SLPROG; then
+            echo "    → Contains SLPROG section → special conversion"
+            $bindir/sh-elf-objcopy -I coff-sh -O elf32-sh \
+                --set-section-flags SLPROG=alloc,code,contents \
+                --set-section-alignment SLPROG=32 \
+                "$obj_file.coff" "$obj_file"
+        else
+            $bindir/sh-elf-objcopy -I coff-sh -O elf32-sh "$obj_file.coff" "$obj_file"
+        fi
         merged_objs+=("$obj_file")
     done
 
@@ -198,7 +207,7 @@ convert_sega_coff() {
         return 1
     fi
 
-    rm -rf "$temp_dir"
+#    rm -rf "$temp_dir"
     echo "Done: $output"
 }
 
