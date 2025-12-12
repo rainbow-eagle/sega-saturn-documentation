@@ -171,6 +171,12 @@ Les jeux trouvables dans le commerce utilisent presque tous du code d'entrée qu
 
 Il n'est néanmoins pas nécessaire d'utiliser une librairie Sega et donc libre à chacun de choisir d'écrire son propre code d'entrée. Ce dernier peut, par exemple, ne rien faire d'autre qu'appeler main(), ou pourquoi pas appeler une autre fonction, ou réaliser quelques initialisation, mais à sa propre sauce. Certains projets et kits de développements homebrew le font, comme _Yaul_. En outre, il semble que Jo Engine tente de diminuer sa dépendance au code Sega au fil des versions, peut-être qu'_in fine_ il existera une version parfaitement indépendante des librairies Sega.
 
+Créer son propre code d'entrée demande une combinaison d'actions entre l'écriture du code et le _linking_, dont nous parlerons plus tard. À ce stade, une seule action est nécessaire : dans le code source, marquer la fonction qui servira de code d'entrée avec un attribut __attribute__((section("nom_de_la_section"))). Par exemple  
+```C
+extern void my_entry_code(void) __attribute__((section("MY_SECTION")));
+```
+indique que la fonction "my_entry_code" doit être placée dans une section "MY_SECTION" dans le fichier .o qui sera produit lors de la compilation. Les différent composants d'un code sont effectivement toujours automatiquement placés dans différentes "sections" des fichiers .o créés; ici nous prenons le contrôle d'un de ces placements afin de le manipuler plus précisément _via_ notre section personnalisée "MY_SECTION". Lors du _linking_ nous demanderons que la section "MY_SECTION" soit placée au début du fichier et cela placera la fonction my_entry_code à cet emplacement, faisant d'elle notre code de démarrage.
+
 Outre le code d'entrée, le _1st read file_ contient également le reste du code, c'est l'objet de la prochaine Section.
 
 ### Fomat du _1st read file_&ensp;: code principal
@@ -191,13 +197,45 @@ Nous disposons d'un cross-compilateur SH2 pour transformer nos .c en .o. Fondame
 
 #### _Linking_
 
-Une fois la compilation a proprement parler terminée, nos sources .c ont donné naissance à des fichiers .o et le compilateur appelle automatiquement le "_linker_" (ce dernier peut être accessible _via_ un exécutable sh-elf-ld ou être caché dans sh-elf-gcc). C'est lui qui va "lier" les .o (issus de vos sources mais aussi de librairies que vous utilisez) en un unique fichier exécutable. C'est donc à lui que nous devons demander de placer le code de démarrage au début du fichier. On va communiquer avec le _linker_ au travers de l'appel au compilateur en passant des arguments sous cette forme :
+Une fois la compilation a proprement parler terminée, nos sources .c ont donné naissance à des fichiers .o et le compilateur appelle automatiquement le "_linker_" (ce dernier peut être accessible _via_ un exécutable sh-elf-ld ou être caché dans sh-elf-gcc). C'est lui qui va "lier" les .o (issus de vos sources mais aussi de librairies que vous utilisez) en un unique fichier exécutable. C'est donc à lui que nous devons demander de placer le code de démarrage au début du fichier. On va communiquer avec le _linker_ au travers de l'appel au compilateur en passant des arguments sous cette forme&ensp;:
 
 ```
 -Xlinker -argumentPourLeLinker
 ```
 
-"-Xlinker" indique au compilateur "le prochain argument n'est pas pour toi, mais pour le _linker_". Par exemple, Jo Engine passe les arguments suivant au compilateur :
+"-Xlinker" indique au compilateur "le prochain argument n'est pas pour toi, mais pour le _linker_". Notre but est de passer un _linker script_, c.-à-d. un fichier d'instructions au _linker_. La syntaxe correcte est "-T" suivi du nom du fichier, par exemple si notre fichier se nomme "script.linker" on utilisera "-Tscript.linker". Mais ces arguments doivent passer à travers le compilateur en utilisant la syntaxe expliquée plus tôt. Nous passerons donc les arguments suivants à gcc&ensp;:
+
+```
+-Xlinker -Tscript.linker
+```
+
+Et maintenant, assurons-nous que notre fichier script.linker contient les instructions qui forcent le placement de notre code de démarrage au début du fichier. Poursuivons avec notre exemple introduit un peu plus tôt. Nous avions placé notre fonction "my_entry_code" dans une section "MY_SECTION" de façon à l'utiliser comme code de démarrage. Dans script.linker, écrivons ceci
+
+```
+ENTRY(___MY_ENTRY)
+SECTIONS {	
+	MY_SECTION 0x06004000 : {	
+		___MY_ENTRY = .;
+		*(MY_SECTION)	
+	}	
+}
+```
+
+La première ligne indique au _linker_ que le point d'entrée du fichier est l'emplacement référencé par le symbole "___MY_ENTRY". Difficile à comprendre pour le moment, mais nous y reviendrons vite.
+
+Le reste du fichier demande au _linker_ de rassembler toutes les sections marquées "MY_SECTION" depuis toutes les sources vers une même section "MY_SECTION" dans binaire qui sera assemblé. En outre, cette section "MY_SECTION" doit être chargée à l'adresse mémoire 0x06004000. En partant du principe qu'une seule fonction a été marquée "MY_SECTION", c'est-à-dire la fonction "my_entry_code", cela nous assure que notre code de démarrage sera effectivement chargé à l'emplacement mémoire 0x06004000.
+
+En outre, la ligne "___MY_ENTRY = .;" définit un symbol à l'emplacement 0x06004000, c'est à dire là où ce trouve le code de démarrage. Or, nous avons demandé plus tôt que ce symbole soit le point d'entrée du fichier, donc ces quelques instructions signifient ensemble "l'exécutable commence ici, et ce point devra être chargé en mémoire à l'emplacement 0x06004000". Le tour est joué, nous avons placé notre code de démarrage là où nous le voulions.
+
+À ce stade le compilateur et le _linker_ reçoivent toutes les instructions nécessaires pour accomplir la tâche qu'on leur demande. Le résultat de la compilation sera un fichier binaire, typiquement au format .elf.
+
+> **_Remarque_** : le format .elf est une norme pour représenter un exécutable binaire. La norme définit un en-tête d'un certain format, suivi d'un genre de table des matières, puis le corps de l'exécutable suivi de ceci, puis de cela... Il est possible de parfois rencontrer un format plus ancien mais également utilisable : .coff. Par exemple, le kit officiel Sega utilise et crée des fichiers .coff. Utiliser l'un ou l'autre ne change pas grand chose. Il convient juste de savoir ce qu'on fait et de ne pas tout mélanger. Par exemple, votre compilateur produit-il des fichiers .elf ou .coff ? Les librairies de Sega sont au format .coff, mais vous pouvez trouver en ligne des versions converties au format .elf; lesquelles utilisez-vous ?
+
+#### _Linking_ - exemple de SGL / Jo Engine
+
+Cette Section explique comment Jo Engine guide le _linking_ d'une façon similaire à ce que nous avons expliqué à la Section précédente. Elle est optionnelle et nous invitons le lecteur à passer directement à la Section suivante s'il ne s'intéresse qu'au minimum nécessaire pour créer un exécutable valide. Enfin, remarquez que Jo Engine utilise le code de démarrage de SGL, donc cette Section fait également office d'explication générique valide de ce comment utiliser SGL dans son projet, même sans Jo Engine.
+
+Jo Engine passe les arguments suivant au compilateur :
 
 ```
 -Xlinker -T$(LDFILE) -Xlinker -Map -Xlinker game.map -Xlinker -e -Xlinker ___Start
@@ -209,9 +247,9 @@ Donc le _linker_ reçoit :
 ```
 
 Ce qui signifie :
-* **-Tsgl.linker** : utilise le _linker script_ "sgl.linker". Un linker script est un fichier qui va donner des instructions précises au linker sur la façon de lier les différents objects .o. SGL utilise un _linker script_ nommé SL.LNK.
+* **-Tsgl.linker** : utilise le _linker script_ "sgl.linker" (les démos SGL utilisent un _linker script_ nommé SL.LNK).
 * **-Map game.map** : génère un fichier "game.map" dans lequel sera représenté le résultat final de l'étape de _linking_, c'est-à-dire une sorte de carte de la disposition des différents éléments contenus dans le _1st read file_. Ce fichier est parfaitement optionnel mais utile pour vérifier que la disposition est bien celle que l'ont attendait.
-* **-e __Start** : le point d'entrée du fichier doit être __Start. Difficile à expliquer tant qu'on n'a pas plongé dans le _linker script_. Alors faisons précisément ça.
+* **-e __Start** : le point d'entrée du fichier doit être __Start. Dans la Section précédente, nous utilisions plutôt une instruction à l'intérieur du _linker script_ pour obtenir le même effet (_cf._ ENTRY(___MY_ENTRY)).
 
 Dans le _linker script_ utilisé par Jo Engine ou SGL, on va trouver (entre autre) le bloc d'instructions ci-dessous.
 
@@ -222,9 +260,9 @@ Dans le _linker script_ utilisé par Jo Engine ou SGL, on va trouver (entre autr
 	}	
 ``` 
 
-Ces lignes demandent au linker de créer une section "SLSTART" dans le fichier binaire et d'y rassembler toutes les sections nommées "SLSTART" qui se trouvent dans les fichiers .o traités. En outre, un symbole nommé "__Start" est créé; cela permet de faire référence à cet emplacement à partir d'autres endroits... comme nous l'avons vu juste avant avec les arguments passés au linker : "-e __Start". Finalement, on voit apparaître à nouveau la fameuse adresse mémoire 0x06004000, de façon à la placer à l'intérieur même du fichier binaire produit, de sorte à ce qu'il soit conscient qu'il se trouvera à cet emplacement lors de son exécution.
+Ces lignes demandent au linker de créer une section "SLSTART" dans le fichier binaire et d'y rassembler toutes les sections nommées "SLSTART" qui se trouvent dans les fichiers .o traités. En outre, un symbole nommé "__Start" est créé; cela permet de faire référence à cet emplacement à partir d'autres endroits... comme nous l'avons vu juste avant avec les arguments passés au linker : "-e __Start". Finalement, on voit apparaître à nouveau la fameuse adresse mémoire 0x06004000.
 
-Nous évoquons les sections "SLSTART" des fichiers .o traités. Pour comprendre ce que ça signifie, il faut s'intéresser à la structure des fichiers .o (juste un peu, c'est promis). Un fichier objet va typiquement être constitué de plusieurs sections. La plupart du temps, il s'agit de sections portant des noms génériques qu'on retrouve dans la plupart des .o. Par exemple, une section pour les variables, une autre pour les variables globales, une section pour le code, etc. Mais il est possible de créer un .o de sorte qu'il contienne une section dont on personnalise le contenu et le nom. Sega a précisément fait ça dans avec son code d'entrée : SGLAREA.O. En fait, pour être précis, le code d'entrée est la section "SLSTART" du fichier SGLAREA.O. Donc c'est cette section qui doit se retrouver au tout début du _1st read file_. Et lorsqu'on demande de rassembler "toutes les sections SLSTART" de tous les fichiers .o, on sait très bien qu'une seule section sera trouvée et placée à cet emplacement&ensp;: celle de SGLAREA.0.
+Nous évoquons les sections "SLSTART" des fichiers .o traités. En effet, tout comme nous proposions plus tôt de placer notre code de démarrage dans une section personnalisée "MY_SECTION", Sega a fait la même chose avec le code de démarrage SGL et l'a placé dans une section "SLSTART" au sein du fichier SGLAREA.O. Donc c'est cette section qui doit se retrouver au tout début du _1st read file_. Et lorsqu'on demande de rassembler "toutes les sections SLSTART" de tous les fichiers .o, on sait très bien qu'une seule section sera trouvée et placée à cet emplacement&ensp;: celle de SGLAREA.0.
 
 Maintenant que nous avons passé en revue tout ces points, nous pouvons les assembler et comprendre ce qu'il se passe. "-e __Start" signifie "l'exécutable commence là où se trouve le symbole __Start", or le _linker script_ définit le symbole __Start là où on place la section SLSTART de SGLAREA.O. Bref, nous demandons au fichier de démarrer avec le code de démarrage, soit exactement ce que nous cherchons à faire depuis le début.
 
@@ -238,9 +276,11 @@ Maintenant que nous avons passé en revue tout ces points, nous pouvons les asse
 	}	
 ```
 
-À ce stade le compilateur et le _linker_ reçoivent toutes les instructions nécessaire pour accomplir la tâche qu'on leur demande. Le résultat de la compilation sera un fichier binaire, typiquement au format .elf, accompagné d'un optinel fichier "game.map" si on l'a demadné au linker.
+> **_Remarque_** : SGL demande également de demander au _linker_ de produire un fichier binaire au format COFF et non ELF. Nous ne pouvons pas encore bien déterminer pourquoi exactement le format ELF échoue mais proposons une analyse technique de la question dans en Annexe de notre document "SEGA SGL Libraries, Conversion and Toolchain Compatibility". Le format par défaut des compilateurs moderne étant ELF, il convient d'ajouter au _linker script_ l'instruction suivante pour créer un COFF. Remarquez également que ceci est compatible avec des objets et librairies au format ELF; c.-à-d. qu'il n'est pas nécessaire d'utiliser le format COFF lors de la compilation pour utiliser SGL.
 
-> **_Remarque_** : le format .elf est une norme pour représenter un exécutable binaire. La norme définit un en-tête d'un certain format, suivi d'un genre de table des matières, puis le corps de l'exécutable suivi de ceci, puis de cela... Il est possible de parfois rencontrer un format plus ancien mais également utilisable : .coff. Par exemple, le kit officiel Sega utilise et crée des fichiers .coff. Utiliser l'un ou l'autre ne change pas grand chose. Il convient juste de savoir ce qu'on fait et de ne pas tout mélanger. Par exemple, votre compilateur produit-il des fichiers .elf ou .coff ? Les libraries de Sega sont au format .coff, mais vous pouvez trouver en ligne des versions converties au format .elf; laquelle utilisez-vous ?
+```
+OUTPUT_FORMAT(coff-sh)
+```
 
 Un rapide coup d’œil au fichier .map permet de vérifier que le code d'entrée est placé au bon endroit. Si tout s'est bien passé, nous devrions retrouver des lignes similaires à celles ci-dessous. On voit apparaître une Section SLSTART à l'adresse 0x0000000006004000, qui correspond au symbole "__Start" et ensuite des objets SGL semble avoir été injectés (sgI00.o)... c'est un succès !
 
@@ -266,9 +306,9 @@ SLSTART         0x0000000006004000       0x30
 (...)
 ```
 
-#### Conversion du format ELF en exécutable pur
+#### Conversion en exécutable pur
 
-Nous possédons maintenant un fichier .elf valide, et pourtant la Saturn n'en voudrait pas si on lui présentait en l'état. En effet, le format .elf (ou .coff) encapsule le binaire lui-même avec des métadonnées, des tables, des en-têtes... Or, la Saturn va juste lire le fichier dès ces premiers octets en s'attendant à y trouver des instructions binaires et pas ces métadonnées. Il nous reste donc à libérer le cœur du fichier .elf, c.-à-d. l'exécutable en soi, des bidules qui l'entourent. Heureusement, c'est une étape très simple.
+Nous possédons maintenant un fichier .elf ou .coff valide, et pourtant la Saturn n'en voudrait pas si on lui présentait en l'état. En effet, ces formats encapsulent le binaire lui-même avec des métadonnées, des tables, des en-têtes... Or, la Saturn va juste lire le fichier dès ces premiers octets en s'attendant à y trouver des instructions binaires et pas ces métadonnées. Il nous reste donc à libérer le cœur du fichier, c.-à-d. l'exécutable en soi, des bidules qui l'entourent. Heureusement, c'est une étape très simple.
 
 Supposons que notre fichier se nomme game.elf. Alors on exécutera la commande suivante :
 

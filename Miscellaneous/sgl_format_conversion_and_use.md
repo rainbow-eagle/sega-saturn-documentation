@@ -16,11 +16,12 @@ The document is structured as follows:
 	* 1.3. Detailed Archive Structure and Parsing Logic
 	* 1.4. Special Case: SGLAREA.O – The SLPROG Section and Symbol Type Preservation
 	* 1.5. Conversion Process and Implementation
+	* 1.6. Use with a linker script and limitations
 2. Header File (.h) Encoding and Compatibility Issues  
 	* 2.1. Windows Legacy Issues
 	* 2.2. Case Inconsistency in #include Directives
 	* 2.3. Japanese Character Loss and Recovery
-	* 2.4. Conversion implementation 
+	* 2.4. Conversion implementation
 
 ---
 
@@ -234,6 +235,16 @@ for obj_file in *.O; do
 done
 ```
 
+### 1.6 Use with a linker script and limitations
+
+It is important to note that specificities in the behaviour of the SGL libraries mean that the libraries, albeit converted and linkable, cannot be linked using the full potential of the ELF format. Indeed when linking with a modern ELF compiler, the default output format will be "elf32-sh", which realize a series of optimizations that break SGL. The SGL library expects the default format at the time it was written : "coff-sh". This behaviour can still be obtained with a modern linker using a linker file that specifies
+
+```
+OUTPUT_FORMAT(coff-sh)
+```
+
+and this is what we advised the developer to do to this day. We annexed [an analysis of the behaviour of the linker](#why-elf32-sh-output-format-fails-to-link-properly) trying to explain the failure of the elf2-sh output format to produce a valid executable.
+
 ---
 
 ## 2. Header File (.h) Encoding and Compatibility Issues
@@ -274,3 +285,69 @@ for f in *.H; do
     tr -d '\032' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 done
 ```
+
+# Annex
+
+## Why elf32-sh output format fails to link properly
+
+Linking the converted SGL library using OUTPUT_FORMAT(elf32-sh) will create an invalid executable whereas OUTPUT_FORMAT(coff-sh) succeeds in doing so. In this Section we analyse and try to give an idea of where the problem might lie.
+
+### What the linker does right
+
+The elf32-sh linker will optimize the memory usage and cause some data to progressively shift as they occupy the memory more efficiently. For example, the sample "Demo A" delivered with SGL, when built into a valid 1st read file (_i.e._ the raw binary stripped from the COFF file with OUTPUT_FORMAT(coff-sh)), the string constant "demo A" will occupy the byte 400, and therefore be loaded at runtime in the Saturn at the memory address 0x06004400.
+
+hexdump -C 1st_read.bin gives the following
+```
+000003f0  06 00 43 80 06 0f fc 00  06 00 40 40 00 00 00 00  |..C.......@@....|
+00000400  64 65 6d 6f 20 41 00 00  00 00 00 00 00 00 00 00  |demo A..........|
+```
+And looking at the memory layout of a Saturn emulator we see
+```
+060043f0 | 06 00 43 80 06 0f fc 00  06 00 40 40 00 00 00 00  |..C.......@@....|
+06004400 | 64 65 6d 6f 20 41 00 00  00 00 00 00 00 00 00 00  |demo A..........|
+```
+
+Looking closely, we can see that the 4 bytes that precede the "demo A" are unused and simply set to 0. "demo A" is placed at a standard alignment location: 400.
+
+But when building 1st_read.bin from an ELF file using OUTPUT_FORMAT(elf32-sh), we see that those 4 bytes are not lost, and therefore the string is shifted a bit earlier in the file. At runtime, they are shifted in memory as well.
+
+hexdump -C 1st_read.bin gives
+```
+000003f0  06 00 43 80 06 0f fc 00  06 00 40 40 64 65 6d 6f  |..C.......@@demo|
+00000400  20 41 00 00 00 00 00 00  00 00 00 00 00 00 00 00  | A..............|
+```
+And the Saturn emulator shows
+```
+060043f0 | 06 00 43 80 06 0f fc 00  06 00 40 40 64 65 6d 6f  |..C.......@@demo|
+06004400 | 20 41 00 00 00 00 00 00  00 00 00 00 00 00 00 00  | A..............|
+```
+
+This difference in itself is not an issue since the linker correctly shifts all references to the string "demo A" and other symbols. Where the COFF based code searches for the string at 0x0600400, the ELF based code searches it at 0x06003fc. This can be observed at runtime in memory. A reference to the string is located at 0x060041d0 and the value of that reference differs from the elf32-sh version to the coff-sh version to address the shift.
+
+### What the linker does wrong
+
+Going further with our example "Demo A", we can point out a case where the references to memory addresses are wrong in the elf32-sh format file. Let's look at the object sglI00.o from LIBSGL.A. Both elf32-sh and coff-sh linker maps indicate this object will be placed at 0x06014680 in memory. And indeed, this can is confirmed at runtime. Now let's have a look to a reference to 0x06014680. In the coff-sh version of the bin file, a pointer to sglI00.o can be found at 0x00010A24. However, in the same location, in the elf32-sh version of the file, we can find a pointer to 0x060146a8 instead. This should be the same in both files, since the referenced object is located at the same memory address in both files, yet, the ELF version stores a different value, which is incorrect.
+
+Actually, around 0x00010A24, there are in total 5 references that are correct in the COFF version but invalid in the ELF version. Every single of those references suffer the same issue : they are shifted 40 bytes (0x28 bytes) higher than the actual address they are trying to refer to.
+
+coff-sh (valid)
+```
+00010a10  c2 05 00 0b c2 f3 00 00  06 00 03 00 06 01 46 b6  |..............F.|
+00010a20  06 01 48 0e 06 01 46 80  06 01 46 92 06 01 46 a4  |..H...F...F...F.|
+```
+
+elf32-sh (invalidly shifted)
+```
+00010a10  c2 05 00 0b c2 f3 00 00  06 00 03 00 06 01 46 de  |..............F.|
+00010a20  06 01 48 36 06 01 46 a8  06 01 46 ba 06 01 46 cc  |..H6..F...F...F.|
+```
+
+More interestingly, those are the only references that are incorrect and cause the demo to crash. Indeed, manually editing the elf32-sh binary file to fix those references is enough to have the demo work perfectly, despite the other shifts performed by the linker.
+
+The reason why those 5 pointers are incorrect is unclear. One explanation could be that the elf32-sh linker made a mistake trying to address an offset that does not exist. But even if it is the case, it remains difficult to understand why that mistake would happen at all, and why it happens precisely there and nowhere else. After all, other references, both from native ELF files and from the converted libraries are correctly resolved.
+
+More research is necessary to address this issue and maybe make it possible to produce valid binaries using the full potential of the ELF format. We suggest to consider 2 possibilities:
+* the library conversion process itself is flawed and fail to produce ELF compatible files;
+* SGL manipulates the memory layout in a non-generic way that makes assumption about the result of the linking step.
+
+In the latter case, it would prove impossible to make the libraries linkable with the elf32-sh output format.
