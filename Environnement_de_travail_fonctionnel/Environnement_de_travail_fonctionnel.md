@@ -1,5 +1,20 @@
 # En quoi consiste un environnement de travail pour développer pour la Sega Saturn
 
+## Table des matières
+
+1. Introduction
+2. Les différents composants d'un environnement de travail
+3. Compilateur SH2
+4. Séquence de démarrage de la Sega Saturn
+5. Initial Program (IP.BIN)
+6. 1st read file (1st_read.bin, 0.bin)
+7. Création d’une image CD valide
+
+Annexe
+1. Analyse des flags de compilation de Jo Engine
+2. Analyse de la création d’images CD de Jo Engine
+3. Script pour construire un compilateur Saturn
+
 ## Introduction
 
   Le but de ce tutoriel est d'expliquer comment fonctionne un environnement de travail moderne pour Sega Saturn. Les différents fichiers et outils nécessaires sont présentés et leurs interactions expliquées. Nous décrivons la séquence de démarrage de la Saturn afin d'en tirer les contraintes que les jeux doivent respecter. Jo Engine est utilisé comme exemple pour certaines explications, mais ce tutoriel couvre bien n'importe quel environnement de travail.
@@ -157,7 +172,9 @@ Remarquez que cette approche ne couvre pas tous les cas de figure. En effet, ell
 
 Enfin, notez que ce script est basique et ne contrôle pas le respects de contraintes de taille entourant les différents champs. Il convient de se référer à la documentation Sega pour en savoir plus si nécessaire, _cf._ Disc Format Standards Specification Sheet Ver. 1.0).
 
-> **_Remarque:_** l'IP fournit avec Jo Engine couvre la plupart des cas d'utilisation d'un développeur homebrew. C'est donc une base suffisante pour créer son propre IP (vous pouvez également simplement l'utiliser en l'état si ça ne vous dérange pas que quelques métadonnées mentionnent "JO ENGINE" au début sur votre disque).
+> **_Remarque :_** l'IP fournit avec Jo Engine couvre la plupart des cas d'utilisation d'un développeur homebrew. C'est donc une base suffisante pour créer son propre IP (vous pouvez également simplement l'utiliser en l'état si ça ne vous dérange pas que quelques métadonnées mentionnent "JO ENGINE" au début sur votre disque).
+
+> **_Remarque :_ si vous tenez à véritablement créer un IP par la méthode officielle, notez que les _samples_ de la librairie SGL de Sega contient un répertoire "SYS" qui sert précisément à ça. Il contient les sources du code d'initialisation et tout le nécessaire, à ceci près que le _linker script_ ne fonctionne pas avec un compilateur GNU, donc il contient de l'adapter. Finalement, la _Saturn Ring Library_, une librairie homebrew, a réalisé ce travail d'adaptation et contient tout le nécessaire pour construire son propre IP comme Sega le prévoyait (dans modules/sgl/IP).**
 
 ## _1st read file_
 
